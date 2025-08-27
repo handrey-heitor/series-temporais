@@ -1,0 +1,98 @@
+library(dplyr)
+library(forecast)
+library(lmtest)
+
+dados <- read.csv("tabela_producao_oleo.csv", header = TRUE, sep = ",")
+
+campo_amaros <- dados %>%
+  filter(Campo == "CANTO DO AMARO") %>%
+  group_by(Período) %>%
+  summarise(total_barris = sum(Óleo..bbl.dia., na.rm = TRUE))
+
+
+# Conversão para série temporal
+stemp = ts(campo_amaros, start = c(2005), end = c(2022), frequency = 12)
+barris = stemp[,2]
+plot(barris)
+
+# Análise da série temporal
+seasonplot(barris, 
+           col = rainbow(12),
+           year.labels = TRUE,
+           type = "o",
+           pch = 16,)
+
+# Análise da autocorrelação
+ggtsdisplay(barris)
+
+# Transformação Box-Cox
+lambda = BoxCox.lambda(barris)
+barris_transformado = BoxCox(barris, lambda = lambda)
+ggtsdisplay(barris_transformado)
+
+# Determinação da ordem de diferenciação
+ndiffs(barris_transformado)
+barrils_diferenciado <- diff(barris_transformado,1)
+ggtsdisplay(barrils_diferenciado)
+
+# Diferencia sazonal
+nsdiffs(barrils_diferenciado)
+
+# Ajuste do modelo ARIMA
+barril_treino <- window(barris, start = c(2005,1), end = c(2015,12))
+barril_validacao <- window(barris, start = c(2016,1))
+
+
+auto.arima(barril_treino, 
+                     lambda = lambda,
+                     stepwise = FALSE,
+                     approximation = FALSE,
+                     trace = TRUE)
+
+flit <- Arima(barril_treino, 
+                      order = c(1,1,0),
+                      seasonal = c(0,0,1),
+                      include.drift = TRUE,
+                      lambda = NULL)
+
+# Avaliação do modelo
+summary(flit)
+coeftest(flit)
+
+plot(barril_treino)
+lines(flit$fitted, col = "red")
+
+accuracy(barril_treino, flit$fitted)
+
+# Previsão
+previsao <- forecast(flit, h = 1)
+plot(previsao)
+accuracy(barril_validacao, previsao$mean)
+
+# Previsão de 12 meses
+previsao_12_meses <- forecast(flit, h = 12)
+plot(previsao_12_meses)
+
+plot(as.numeric(barril_validacao), type = 'l')
+lines(as.numeric(previsao_12_meses$mean), col = 'red')
+
+accuracy(barril_validacao, previsao_12_meses$mean)
+
+# Modelo do jeito do autoarima
+flit2 <- Arima(barril_treino,
+              order = c(0,1,0),   # ordem do ARIMA
+              include.drift = TRUE, 
+              lambda = NULL)
+
+previsao_12_meses <- forecast(flit2, h = 12)
+plot(previsao_12_meses)
+plot(as.numeric(barril_validacao), type = 'l')
+lines(as.numeric(previsao_12_meses$mean), col = 'red')
+accuracy(barril_validacao, previsao_12_meses$mean)
+
+# Outros testes
+fit_tb   <- tbats(barril_treino)              # TBATS p/ sazonalidade mais flexível
+prev_tb  <- forecast(fit_tb, h=length(barril_validacao))
+accuracy(prev_tb$mean, barril_validacao)
+
+
